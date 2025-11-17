@@ -1,0 +1,173 @@
+# =============== #
+# Unity Generated #
+# =============== #
+
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+UserSettings/
+
+# Prevents Unity from reimporting all assets
+/[Aa]ssets/AssetStoreTools*
+
+# =============== #
+# IDE / OS Files  #
+# =============== #
+
+# VSCode, JetBrains, Rider
+.vscode/
+.idea/
+*.sln
+*.csproj
+*.unityproj
+*.pidb
+*.user
+*.booproj
+
+# macOS
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# Linux
+*~
+.nfs*
+
+# =============== #
+# Shader Cache    #
+# =============== #
+
+/[Aa]ssets/**/ShaderCache/
+*.shadergraph.meta
+
+# =============== #
+# Generated Files #
+# =============== #
+
+*.generated.cs
+*.bak
+*.log
+*.swp
+
+# =============== #
+# Build Artifacts #
+# =============== #
+
+*.apk
+*.aab
+*.ipa
+*.xcworkspace/
+*.xcproject/
+*.xcodeproj/
+*.apk.meta
+*.aab.meta
+
+# =============== #
+# Unity Collab     #
+# =============== #
+/[Uu]serSettings/Layouts/*
+/[Uu]serSettings/EditorUserSettings.asset
+
+# =============== #
+# Addressables     #
+# =============== #
+/[Aa]ssets/AddressableAssetsData/*
+
+# =============== #
+# IL2CPP Cache     #
+# =============== #
+/Library/Il2cppBuildCache/
+*/Il2CppOutputProject/
+*/il2cpp_cache/
+
+# =============== #
+# Android Gradle   #
+# =============== #
+.gradle/
+.gradle/
+/gradle/
+**/gradlew
+**/gradlew.bat
+**/gradle/wrapper/
+**/gradle.properties
+**/.gradle/
+**/local.properties
+*.keystore
+*.jks
+
+# =============== #
+# AR Foundation    #
+# (safe defaults)  #
+# =============== #
+**/ARKitGenerated/*
+**/ARCoreGenerated/*
+**/UnityXRPluginSettings.json
+
+# =============== #
+# Packages Cache   #
+# =============== #
+/Packages/com.unity.*/*
+!/Packages/manifest.json
+!/Packages/packages-lock.json
+
+# =============== #
+# TextMeshPro      #
+# =============== #
+/[Aa]ssets/TextMesh Pro/Resources/Font_Assets/*
+
+# =============== #
+# Logs & Reports   #
+# =============== #
+*.stacktrace
+/crash/
+sysinfo.txt
+
+# =============== #
+# glTFast (safe)   #
+# =============== #
+**/GltfGlobalsCache/
+**/GltfCache/
+
+# =============== #
+# Native Plugins   #
+# =============== #
+/Assets/Plugins/Android/*/gradle/**
+
+# =============== #
+# Fastlane / CI    #
+# =============== #
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# =============== #
+# Visual Studio    #
+# =============== #
+*/.vs/*
+*/.vscode/*
+
+# =============== #
+# Unity StreamingAssets #
+# =============== #
+/Assets/StreamingAssets/*
+
+# =============== #
+# Misc / Safe      #
+# =============== #
+*.tmp
+*.temp
+*.backup
+*.orig
+*.merge
+*.diff
+
