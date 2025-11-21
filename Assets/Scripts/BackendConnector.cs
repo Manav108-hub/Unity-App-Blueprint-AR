@@ -12,7 +12,7 @@ using UnityEngine.Android;
 public class BackendConnector : MonoBehaviour
 {
     // Default URL (will be overridden in Awake)
-    public string uploadUrl = "http://51.21.201.36:5000/image-to-glb";
+    public string uploadUrl = "http://16.171.206.252:5000/image-to-glb";
 
     // Optional: max size after compression (bytes)
     public int maxUploadBytes = 6 * 1024 * 1024; // 6 MB
@@ -30,7 +30,7 @@ public class BackendConnector : MonoBehaviour
         uploadUrl = "http://localhost:5000/image-to-glb";
         Debug.Log("[BackendConnector] Running in Editor → using LOCALHOST endpoint: " + uploadUrl);
 #else
-        uploadUrl = "http://51.20.107.234:5000/image-to-glb";
+        uploadUrl = "http://16.171.206.252:5000/image-to-glb";
         Debug.Log("[BackendConnector] Running on Device → using SERVER endpoint: " + uploadUrl);
 #endif
     }
