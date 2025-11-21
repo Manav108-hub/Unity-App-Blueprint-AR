@@ -21,20 +21,33 @@ public class BackendConnector : MonoBehaviour
     [Range(10, 95)]
     public int jpegQuality = 80;
 
+    // ==========================================
+    //   GLB MEMORY STORAGE + EVENT SYSTEM
+    // ==========================================
+    public static byte[] lastGlbBytes;                 // latest received glb
+    public static List<byte[]> glbHistory = new();     // all glb files received
+
+    // 🔥 Event fired whenever a new GLB arrives
+    public static event System.Action<byte[]> OnNewGLB;
+
+
     // -------------------------------------------------------
-    // ✅ Fix: Always override URL depending on platform
+    // Override URL depending on platform
     // -------------------------------------------------------
     void Awake()
     {
 #if UNITY_EDITOR
         uploadUrl = "http://localhost:5000/image-to-glb";
-        Debug.Log("[BackendConnector] Running in Editor → using LOCALHOST endpoint: " + uploadUrl);
+        Debug.Log("[BackendConnector] Running in Editor → LOCALHOST endpoint: " + uploadUrl);
 #else
         uploadUrl = "http://16.171.206.252:5000/image-to-glb";
-        Debug.Log("[BackendConnector] Running on Device → using SERVER endpoint: " + uploadUrl);
+        Debug.Log("[BackendConnector] Running on Device → SERVER endpoint: " + uploadUrl);
 #endif
     }
 
+    // -------------------------------------------------------
+    // Open gallery → pick image
+    // -------------------------------------------------------
     public void OnUploadButton()
     {
         StartCoroutine(PickAndUpload());
@@ -45,7 +58,6 @@ public class BackendConnector : MonoBehaviour
         Debug.Log("[BackendConnector] Opening gallery...");
 
 #if UNITY_ANDROID
-        // Make sure permission granted
         if (!Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead))
         {
             Permission.RequestUserPermission(Permission.ExternalStorageRead);
@@ -53,7 +65,6 @@ public class BackendConnector : MonoBehaviour
         }
 #endif
 
-        // Use NativeGallery callback
         NativeGallery.GetImageFromGallery((path) =>
         {
             if (string.IsNullOrEmpty(path))
@@ -64,16 +75,20 @@ public class BackendConnector : MonoBehaviour
 
             Debug.Log("[BackendConnector] Selected image: " + path);
             StartCoroutine(UploadToServer(path));
+
         }, "Select an image", "image/*");
 
         yield return null;
     }
 
+    // -------------------------------------------------------
+    // Upload selected image to backend
+    // -------------------------------------------------------
     IEnumerator UploadToServer(string imagePath)
     {
         if (!File.Exists(imagePath))
         {
-            Debug.LogError("[BackendConnector] Selected image file does not exist: " + imagePath);
+            Debug.LogError("[BackendConnector] Selected file does not exist: " + imagePath);
             yield break;
         }
 
@@ -82,12 +97,14 @@ public class BackendConnector : MonoBehaviour
 
         byte[] uploadBytes = imageBytes;
 
-        // Compress if needed
+        // Compression if needed
         if (imageBytes.Length > maxUploadBytes)
         {
-            Debug.Log($"[BackendConnector] Image larger than {maxUploadBytes} bytes, compressing...");
+            Debug.Log($"[BackendConnector] Image too large → compressing...");
+
             Texture2D tex = new Texture2D(2, 2);
             bool loaded = tex.LoadImage(imageBytes, markNonReadable: false);
+
             if (loaded)
             {
                 float ratio = Mathf.Sqrt((float)maxUploadBytes / (float)imageBytes.Length);
@@ -96,19 +113,19 @@ public class BackendConnector : MonoBehaviour
 
                 Texture2D scaled = ScaleTexture(tex, newW, newH);
                 uploadBytes = scaled.EncodeToJPG(jpegQuality);
-                Debug.Log($"[BackendConnector] After compress: {uploadBytes.Length} bytes ({newW}x{newH})");
+
+                Debug.Log($"[BackendConnector] Compressed → {uploadBytes.Length} bytes ({newW}x{newH})");
 
                 DestroyImmediate(tex);
                 DestroyImmediate(scaled);
             }
             else
             {
-                Debug.LogWarning("[BackendConnector] Failed to compress, sending original.");
+                Debug.LogWarning("[BackendConnector] Failed to compress. Sending original.");
             }
         }
 
-        // Build form data — server expects field “image”
-        List<IMultipartFormSection> formData = new List<IMultipartFormSection>
+        List<IMultipartFormSection> formData = new()
         {
             new MultipartFormFileSection("image", uploadBytes, Path.GetFileName(imagePath), "image/jpeg")
         };
@@ -117,7 +134,7 @@ public class BackendConnector : MonoBehaviour
         uwr.timeout = 120;
         uwr.downloadHandler = new DownloadHandlerBuffer();
 
-        Debug.Log($"[BackendConnector] Uploading → {uploadUrl}, file={Path.GetFileName(imagePath)}, size={uploadBytes.Length}");
+        Debug.Log($"[BackendConnector] Uploading → {uploadUrl}, size={uploadBytes.Length}");
 
         var operation = uwr.SendWebRequest();
         while (!operation.isDone)
@@ -132,34 +149,33 @@ public class BackendConnector : MonoBehaviour
         if (uwr.isNetworkError || uwr.isHttpError)
 #endif
         {
-            Debug.LogError($"[BackendConnector] Upload failed → {uwr.error} | code: {uwr.responseCode}");
+            Debug.LogError($"[BackendConnector] Upload failed → {uwr.error} | code {uwr.responseCode}");
             yield break;
         }
 
         string contentType = uwr.GetResponseHeader("Content-Type") ?? "";
-        Debug.Log($"[BackendConnector] Upload OK → code={uwr.responseCode}, content-type={contentType}");
+        Debug.Log($"[BackendConnector] Upload OK → {contentType}");
 
         byte[] responseBytes = uwr.downloadHandler.data;
         string textResponse = null;
 
+        // Direct GLB response
         if (responseBytes != null && responseBytes.Length > 0)
         {
             if (contentType.Contains("model/gltf-binary") || LooksLikeGLB(responseBytes))
             {
-                Debug.Log($"[BackendConnector] Server returned GLB bytes directly ({responseBytes.Length})");
+                Debug.Log($"[BackendConnector] Server returned GLB directly ({responseBytes.Length} bytes)");
                 HandleGLBBytes(responseBytes);
                 yield break;
             }
 
             textResponse = Encoding.UTF8.GetString(responseBytes).Trim();
-            Debug.Log("[BackendConnector] Upload response text: " + textResponse);
-        }
-        else
-        {
-            Debug.LogWarning("[BackendConnector] Empty upload response");
+            Debug.Log("[BackendConnector] Response text: " + textResponse);
         }
 
+        // Parse JSON or plain URL
         string glbUrl = null;
+
         if (!string.IsNullOrEmpty(textResponse))
         {
             if (textResponse.StartsWith("{"))
@@ -170,6 +186,7 @@ public class BackendConnector : MonoBehaviour
                     int colon = textResponse.IndexOf(':', idx);
                     int firstQuote = textResponse.IndexOf('"', colon);
                     int secondQuote = textResponse.IndexOf('"', firstQuote + 1);
+
                     if (firstQuote >= 0 && secondQuote > firstQuote)
                         glbUrl = textResponse.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
                 }
@@ -180,18 +197,22 @@ public class BackendConnector : MonoBehaviour
 
         if (!string.IsNullOrEmpty(glbUrl))
         {
-            Debug.Log("[BackendConnector] Server returned GLB URL → " + glbUrl);
+            Debug.Log("[BackendConnector] Fetching GLB via URL → " + glbUrl);
             yield return StartCoroutine(DownloadGLB(glbUrl));
         }
         else
         {
-            Debug.LogError("[BackendConnector] Could not find GLB bytes or URL in response");
+            Debug.LogError("[BackendConnector] Could not locate GLB in response.");
         }
     }
 
+    // -------------------------------------------------------
+    // Download GLB file from URL
+    // -------------------------------------------------------
     IEnumerator DownloadGLB(string glbUrl)
     {
         Debug.Log("[BackendConnector] Downloading GLB → " + glbUrl);
+
         UnityWebRequest req = UnityWebRequest.Get(glbUrl);
         req.timeout = 120;
         req.downloadHandler = new DownloadHandlerBuffer();
@@ -204,51 +225,57 @@ public class BackendConnector : MonoBehaviour
         if (req.isNetworkError || req.isHttpError)
 #endif
         {
-            Debug.LogError("[BackendConnector] Download failed → " + req.error + " | code: " + req.responseCode);
+            Debug.LogError("[BackendConnector] Download failed → " + req.error);
             yield break;
         }
 
         byte[] glbBytes = req.downloadHandler.data;
-        Debug.Log("[BackendConnector] Downloaded GLB bytes: " + (glbBytes?.Length ?? 0));
+        Debug.Log("[BackendConnector] GLB downloaded (" + (glbBytes?.Length ?? 0) + " bytes)");
         HandleGLBBytes(glbBytes);
     }
 
+    // -------------------------------------------------------
+    // Handle GLB bytes received in any form
+    // -------------------------------------------------------
     void HandleGLBBytes(byte[] glbBytes)
     {
         if (glbBytes == null || glbBytes.Length == 0)
         {
-            Debug.LogError("[BackendConnector] Empty GLB bytes");
+            Debug.LogError("[BackendConnector] Empty GLB bytes.");
             return;
         }
 
+        // Save to memory
+        lastGlbBytes = glbBytes;
+        glbHistory.Add(glbBytes);
+
+        Debug.Log($"[BackendConnector] Stored GLB → {glbBytes.Length} bytes | Total={glbHistory.Count}");
+
+        // 🔥 Notify listeners (previewGLB, etc.)
+        OnNewGLB?.Invoke(glbBytes);
+
+        // Pass directly to AR if available
         var ar = FindObjectOfType<SimpleARController>();
         if (ar != null)
         {
+            Debug.Log("[BackendConnector] Passing bytes to SimpleARController...");
             ar.SetGLBBytes(glbBytes);
-            Debug.Log("[BackendConnector] Passed GLB bytes to SimpleARController");
         }
         else
         {
+            // Save fallback file
             string path = Path.Combine(Application.persistentDataPath, "model.glb");
             File.WriteAllBytes(path, glbBytes);
             SimpleARController.glbPath = path;
-            Debug.Log("[BackendConnector] Saved GLB to disk fallback → " + path);
+
+            Debug.Log("[BackendConnector] Saved GLB fallback → " + path);
         }
     }
 
-    // call this when you have the original image bytes (before upload) or the server returns an image preview
-    void ShowImagePreview(byte[] imageBytes)
-    {
-        if (imageBytes == null || imageBytes.Length == 0) return;
-        Texture2D tex = new Texture2D(2, 2);
-        bool ok = tex.LoadImage(imageBytes); // auto-resizes texture
-        if (!ok) { Debug.LogWarning("Failed to create texture from bytes"); return; }
 
-        var ui = FindObjectOfType<UIController>();
-        if (ui != null) ui.ShowPreviewImage(tex);
-    }
-
-
+    // -------------------------------------------------------
+    // Helpers
+    // -------------------------------------------------------
     bool LooksLikeGLB(byte[] b)
     {
         if (b == null || b.Length < 4) return false;
@@ -258,15 +285,18 @@ public class BackendConnector : MonoBehaviour
     Texture2D ScaleTexture(Texture2D src, int width, int height)
     {
         Texture2D dst = new Texture2D(width, height, src.format, false);
+
         for (int y = 0; y < height; y++)
         {
             int yy = Mathf.Clamp(Mathf.RoundToInt((float)y / height * src.height), 0, src.height - 1);
+
             for (int x = 0; x < width; x++)
             {
                 int xx = Mathf.Clamp(Mathf.RoundToInt((float)x / width * src.width), 0, src.width - 1);
                 dst.SetPixel(x, y, src.GetPixel(xx, yy));
             }
         }
+
         dst.Apply();
         return dst;
     }
