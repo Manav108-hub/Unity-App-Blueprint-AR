@@ -1,5 +1,6 @@
 using UnityEngine;
 using System.Collections;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using GLTFast;
 
@@ -15,148 +16,112 @@ public class previewGLB : MonoBehaviour
     // ------------------------------------------------------------
     void OnEnable()
     {
-        Debug.Log("[previewGLB] OnEnable() → Subscribing to BackendConnector.OnNewGLB");
         BackendConnector.OnNewGLB += OnNewGlbReceived;
     }
 
     void OnDisable()
     {
-        Debug.Log("[previewGLB] OnDisable() → Unsubscribing from BackendConnector.OnNewGLB");
         BackendConnector.OnNewGLB -= OnNewGlbReceived;
     }
 
     // ------------------------------------------------------------
-    // Start: load last GLB if already available
+    // Start: load last GLB
     // ------------------------------------------------------------
     IEnumerator Start()
     {
-        Debug.Log("[previewGLB] Start() called → initializing preview loader.");
-
-        // Allow BackendConnector to initialize first
         yield return null;
 
         if (BackendConnector.lastGlbBytes != null &&
             BackendConnector.lastGlbBytes.Length > 0)
         {
-            Debug.Log("[previewGLB] Found previously loaded GLB → loading preview...");
             yield return StartCoroutine(LoadGLB(BackendConnector.lastGlbBytes));
-        }
-        else
-        {
-            Debug.Log("[previewGLB] No GLB available at Start(). Waiting for event...");
         }
     }
 
     // ------------------------------------------------------------
-    // EVENT: Called whenever a new GLB arrives from the server
+    // EVENT — New GLB received
     // ------------------------------------------------------------
     void OnNewGlbReceived(byte[] bytes)
     {
-        Debug.Log("[previewGLB] EVENT → New GLB received (" +
-                  (bytes?.Length ?? 0) + " bytes). Reloading preview.");
-
-        if (bytes == null || bytes.Length == 0)
-        {
-            Debug.LogWarning("[previewGLB] Received empty GLB in event callback.");
-            return;
-        }
-
+        if (bytes == null || bytes.Length == 0) return;
         StartCoroutine(LoadGLB(bytes));
     }
 
     // ------------------------------------------------------------
-    // Load GLB via GLTFast
+    // Load GLB (GLTFast)
     // ------------------------------------------------------------
     IEnumerator LoadGLB(byte[] bytes)
     {
-        Debug.Log("[previewGLB] LoadGLB() → Starting GLTFast loading...");
-
         var gltf = new GltfImport();
-        Task<bool> loadTask = null;
+        Task<bool> loadTask = gltf.LoadGltfBinary(bytes);
 
-        try
-        {
-            Debug.Log("[previewGLB] Calling gltf.LoadGltfBinary()");
-            loadTask = gltf.LoadGltfBinary(bytes);
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[previewGLB] EXCEPTION during LoadGltfBinary: " + ex);
-            yield break;
-        }
-
-        Debug.Log("[previewGLB] Waiting for GLB to finish parsing...");
         yield return new WaitUntil(() => loadTask.IsCompleted);
 
         if (!loadTask.Result)
         {
-            Debug.LogError("[previewGLB] GLB parsing FAILED.");
+            Debug.LogError("GLB parsing FAILED.");
             yield break;
         }
 
-        Debug.Log("[previewGLB] GLB successfully parsed.");
-
-        // -----------------------------------
-        // Destroy any previous preview model
-        // -----------------------------------
+        // Destroy old preview
         if (previewInstance != null)
-        {
-            Debug.Log("[previewGLB] Destroying previous preview instance.");
             Destroy(previewInstance);
-        }
 
-        // -----------------------------------
-        // Create new container for model
-        // -----------------------------------
-        Debug.Log("[previewGLB] Creating new preview container...");
         previewInstance = new GameObject("GLB_Preview");
-        previewInstance.transform.SetParent(transform, worldPositionStays: false);
+        previewInstance.transform.SetParent(transform, false);
 
-        // -----------------------------------
         // Instantiate scene
-        // -----------------------------------
-        Task instantiateTask = null;
-
-        try
-        {
-            Debug.Log("[previewGLB] Calling InstantiateMainSceneAsync()");
-            instantiateTask = gltf.InstantiateMainSceneAsync(previewInstance.transform);
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[previewGLB] EXCEPTION during InstantiateMainSceneAsync: " + ex);
-            Destroy(previewInstance);
-            previewInstance = null;
-            yield break;
-        }
-
-        Debug.Log("[previewGLB] Waiting for instantiation to complete...");
+        Task instantiateTask = gltf.InstantiateMainSceneAsync(previewInstance.transform);
         yield return new WaitUntil(() => instantiateTask.IsCompleted);
 
         if (instantiateTask.IsFaulted)
         {
-            Debug.LogError("[previewGLB] INSTANCIATION FAILED: " + instantiateTask.Exception);
+            Debug.LogError("Instantiation FAILED: " + instantiateTask.Exception);
             Destroy(previewInstance);
             previewInstance = null;
             yield break;
         }
 
-        Debug.Log("[previewGLB] GLB instantiated successfully.");
+        // ------------------------------------------------------------
+        // REMOVE ALL OBJECTS CONTAINING "ceiling"
+        // ------------------------------------------------------------
+        RemoveCeilingObjects(previewInstance.transform);
 
-        // -----------------------------------
-        // Apply final transform
-        // -----------------------------------
+        // ------------------------------------------------------------
+        // Apply final transforms
+        // ------------------------------------------------------------
         previewInstance.transform.localPosition = Vector3.zero;
+        previewInstance.transform.localScale = previewScale * 3f;
 
         previewInstance.transform.localRotation = Quaternion.Euler(
             338.878967f,
             46.7950897f,
             338.633179f
         );
+    }
 
-        // Uniform ×3 scaling
-        previewInstance.transform.localScale = previewScale * 3f;
+    // ============================================================
+    // Remove instantiated children whose names contain "ceiling"
+    // ============================================================
+    void RemoveCeilingObjects(Transform root)
+    {
+        // Must copy children to list to avoid modifying collection while iterating
+        List<Transform> childrenToCheck = new List<Transform>();
 
-        Debug.Log("[previewGLB] Preview model ready under: " + gameObject.name);
+        foreach (Transform child in root)
+            childrenToCheck.Add(child);
+
+        foreach (Transform child in childrenToCheck)
+        {
+            if (child.name.ToLower().Contains("ceiling"))
+            {
+                Debug.Log("Removing CEILING object: " + child.name);
+                Destroy(child.gameObject);
+                continue;
+            }
+
+            // Recursively check deeper nodes
+            RemoveCeilingObjects(child);
+        }
     }
 }
