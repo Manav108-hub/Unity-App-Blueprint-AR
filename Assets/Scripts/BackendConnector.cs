@@ -1,53 +1,38 @@
 using UnityEngine;
 using UnityEngine.Networking;
+using UnityEngine.XR.ARFoundation;
+using UnityEngine.Android;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
-#if UNITY_ANDROID
-using UnityEngine.Android;
-#endif
-
 public class BackendConnector : MonoBehaviour
 {
-    // Default URL (will be overridden in Awake)
     public string uploadUrl = "http://16.171.206.252:5000/image-to-glb";
-
-    // Optional: max size after compression (bytes)
-    public int maxUploadBytes = 6 * 1024 * 1024; // 6 MB
-
-    // JPEG quality for compression (0–100)
-    [Range(10, 95)]
+    public int maxUploadBytes = 6 * 1024 * 1024;
     public int jpegQuality = 80;
 
-    // ==========================================
-    //   GLB MEMORY STORAGE + EVENT SYSTEM
-    // ==========================================
-    public static byte[] lastGlbBytes;                 // latest received glb
-    public static List<byte[]> glbHistory = new();     // all glb files received
-
-    // 🔥 Event fired whenever a new GLB arrives
+    public static byte[] lastGlbBytes;
+    public static List<byte[]> glbHistory = new();
     public static event System.Action<byte[]> OnNewGLB;
 
+    [SerializeField] private GLBLoader loader;
+    [SerializeField] private ARRaycastManager raycastManager;
 
-    // -------------------------------------------------------
-    // Override URL depending on platform
-    // -------------------------------------------------------
     void Awake()
     {
 #if UNITY_EDITOR
         uploadUrl = "http://localhost:5000/image-to-glb";
-        Debug.Log("[BackendConnector] Running in Editor → LOCALHOST endpoint: " + uploadUrl);
 #else
         uploadUrl = "http://16.171.206.252:5000/image-to-glb";
-        Debug.Log("[BackendConnector] Running on Device → SERVER endpoint: " + uploadUrl);
 #endif
+
+        if (!raycastManager)
+            Debug.LogError("❌ ARRaycastManager not assigned!");
     }
 
-    // -------------------------------------------------------
-    // Open gallery → pick image
-    // -------------------------------------------------------
+    // ========== PICK IMAGE ==========
     public void OnUploadButton()
     {
         StartCoroutine(PickAndUpload());
@@ -55,8 +40,6 @@ public class BackendConnector : MonoBehaviour
 
     IEnumerator PickAndUpload()
     {
-        Debug.Log("[BackendConnector] Opening gallery...");
-
 #if UNITY_ANDROID
         if (!Permission.HasUserAuthorizedPermission(Permission.ExternalStorageRead))
         {
@@ -68,232 +51,161 @@ public class BackendConnector : MonoBehaviour
         NativeGallery.GetImageFromGallery((path) =>
         {
             if (string.IsNullOrEmpty(path))
-            {
-                Debug.Log("[BackendConnector] No image selected.");
                 return;
-            }
 
-            Debug.Log("[BackendConnector] Selected image: " + path);
             StartCoroutine(UploadToServer(path));
 
-        }, "Select an image", "image/*");
+        }, "Select image", "image/*");
 
         yield return null;
     }
 
-    // -------------------------------------------------------
-    // Upload selected image to backend
-    // -------------------------------------------------------
+    // ========== UPLOAD IMAGE + RECEIVE GLB ==========
     IEnumerator UploadToServer(string imagePath)
     {
         if (!File.Exists(imagePath))
         {
-            Debug.LogError("[BackendConnector] Selected file does not exist: " + imagePath);
+            Debug.LogError("❌ Image does not exist.");
             yield break;
         }
 
         byte[] imageBytes = File.ReadAllBytes(imagePath);
-        Debug.Log($"[BackendConnector] Picked image bytes: {imageBytes.Length}");
 
         byte[] uploadBytes = imageBytes;
 
-        // Compression if needed
         if (imageBytes.Length > maxUploadBytes)
         {
-            Debug.Log($"[BackendConnector] Image too large → compressing...");
+            Debug.Log("Compressing oversized image...");
 
             Texture2D tex = new Texture2D(2, 2);
-            bool loaded = tex.LoadImage(imageBytes, markNonReadable: false);
+            tex.LoadImage(imageBytes);
 
-            if (loaded)
-            {
-                float ratio = Mathf.Sqrt((float)maxUploadBytes / (float)imageBytes.Length);
-                int newW = Mathf.Max(32, Mathf.RoundToInt(tex.width * ratio));
-                int newH = Mathf.Max(32, Mathf.RoundToInt(tex.height * ratio));
+            float ratio = Mathf.Sqrt((float)maxUploadBytes / (float)imageBytes.Length);
+            int w = Mathf.RoundToInt(tex.width * ratio);
+            int h = Mathf.RoundToInt(tex.height * ratio);
 
-                Texture2D scaled = ScaleTexture(tex, newW, newH);
-                uploadBytes = scaled.EncodeToJPG(jpegQuality);
+            Texture2D scaled = ScaleTexture(tex, w, h);
+            uploadBytes = scaled.EncodeToJPG(jpegQuality);
 
-                Debug.Log($"[BackendConnector] Compressed → {uploadBytes.Length} bytes ({newW}x{newH})");
-
-                DestroyImmediate(tex);
-                DestroyImmediate(scaled);
-            }
-            else
-            {
-                Debug.LogWarning("[BackendConnector] Failed to compress. Sending original.");
-            }
+            DestroyImmediate(tex);
+            DestroyImmediate(scaled);
         }
 
-        List<IMultipartFormSection> formData = new()
+        List<IMultipartFormSection> form = new()
         {
             new MultipartFormFileSection("image", uploadBytes, Path.GetFileName(imagePath), "image/jpeg")
         };
 
-        UnityWebRequest uwr = UnityWebRequest.Post(uploadUrl, formData);
-        uwr.timeout = 120;
-        uwr.downloadHandler = new DownloadHandlerBuffer();
-
-        Debug.Log($"[BackendConnector] Uploading → {uploadUrl}, size={uploadBytes.Length}");
-
-        var operation = uwr.SendWebRequest();
-        while (!operation.isDone)
-        {
-            Debug.Log($"[BackendConnector] Upload progress: {uwr.uploadProgress * 100f:0.0}%");
-            yield return null;
-        }
-
-#if UNITY_2020_1_OR_NEWER
-        if (uwr.result != UnityWebRequest.Result.Success)
-#else
-        if (uwr.isNetworkError || uwr.isHttpError)
-#endif
-        {
-            Debug.LogError($"[BackendConnector] Upload failed → {uwr.error} | code {uwr.responseCode}");
-            yield break;
-        }
-
-        string contentType = uwr.GetResponseHeader("Content-Type") ?? "";
-        Debug.Log($"[BackendConnector] Upload OK → {contentType}");
-
-        byte[] responseBytes = uwr.downloadHandler.data;
-        string textResponse = null;
-
-        // Direct GLB response
-        if (responseBytes != null && responseBytes.Length > 0)
-        {
-            if (contentType.Contains("model/gltf-binary") || LooksLikeGLB(responseBytes))
-            {
-                Debug.Log($"[BackendConnector] Server returned GLB directly ({responseBytes.Length} bytes)");
-                HandleGLBBytes(responseBytes);
-                yield break;
-            }
-
-            textResponse = Encoding.UTF8.GetString(responseBytes).Trim();
-            Debug.Log("[BackendConnector] Response text: " + textResponse);
-        }
-
-        // Parse JSON or plain URL
-        string glbUrl = null;
-
-        if (!string.IsNullOrEmpty(textResponse))
-        {
-            if (textResponse.StartsWith("{"))
-            {
-                int idx = textResponse.IndexOf("glb_url");
-                if (idx >= 0)
-                {
-                    int colon = textResponse.IndexOf(':', idx);
-                    int firstQuote = textResponse.IndexOf('"', colon);
-                    int secondQuote = textResponse.IndexOf('"', firstQuote + 1);
-
-                    if (firstQuote >= 0 && secondQuote > firstQuote)
-                        glbUrl = textResponse.Substring(firstQuote + 1, secondQuote - firstQuote - 1);
-                }
-            }
-            else if (textResponse.StartsWith("http"))
-                glbUrl = textResponse;
-        }
-
-        if (!string.IsNullOrEmpty(glbUrl))
-        {
-            Debug.Log("[BackendConnector] Fetching GLB via URL → " + glbUrl);
-            yield return StartCoroutine(DownloadGLB(glbUrl));
-        }
-        else
-        {
-            Debug.LogError("[BackendConnector] Could not locate GLB in response.");
-        }
-    }
-
-    // -------------------------------------------------------
-    // Download GLB file from URL
-    // -------------------------------------------------------
-    IEnumerator DownloadGLB(string glbUrl)
-    {
-        Debug.Log("[BackendConnector] Downloading GLB → " + glbUrl);
-
-        UnityWebRequest req = UnityWebRequest.Get(glbUrl);
-        req.timeout = 120;
+        UnityWebRequest req = UnityWebRequest.Post(uploadUrl, form);
         req.downloadHandler = new DownloadHandlerBuffer();
 
         yield return req.SendWebRequest();
 
-#if UNITY_2020_1_OR_NEWER
         if (req.result != UnityWebRequest.Result.Success)
-#else
-        if (req.isNetworkError || req.isHttpError)
-#endif
         {
-            Debug.LogError("[BackendConnector] Download failed → " + req.error);
+            Debug.LogError("❌ Upload failed: " + req.error);
             yield break;
         }
 
-        byte[] glbBytes = req.downloadHandler.data;
-        Debug.Log("[BackendConnector] GLB downloaded (" + (glbBytes?.Length ?? 0) + " bytes)");
-        HandleGLBBytes(glbBytes);
+        byte[] response = req.downloadHandler.data;
+
+        if (LooksLikeGLB(response))
+        {
+            HandleGLBBytes(response);
+            yield break;
+        }
+
+        // JSON case:
+        string text = Encoding.UTF8.GetString(response);
+        Debug.Log("Server text response: " + text);
+
+        // Parse glb_url if needed
+        string glbUrl = null;
+
+        if (text.StartsWith("{"))
+        {
+            int idx = text.IndexOf("glb_url");
+            if (idx >= 0)
+            {
+                int q1 = text.IndexOf('"', idx + 7);
+                int q2 = text.IndexOf('"', q1 + 1);
+                glbUrl = text.Substring(q1 + 1, q2 - q1 - 1);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(glbUrl))
+            yield return StartCoroutine(DownloadGLB(glbUrl));
+        else
+            Debug.LogError("❌ No GLB URL found.");
     }
 
-    // -------------------------------------------------------
-    // Handle GLB bytes received in any form
-    // -------------------------------------------------------
-    void HandleGLBBytes(byte[] glbBytes)
+    // ========== DOWNLOAD GLB ==========
+    IEnumerator DownloadGLB(string url)
     {
-        if (glbBytes == null || glbBytes.Length == 0)
+        UnityWebRequest req = UnityWebRequest.Get(url);
+        req.downloadHandler = new DownloadHandlerBuffer();
+
+        yield return req.SendWebRequest();
+
+        if (req.result != UnityWebRequest.Result.Success)
         {
-            Debug.LogError("[BackendConnector] Empty GLB bytes.");
+            Debug.LogError("❌ Download failed: " + req.error);
+            yield break;
+        }
+
+        HandleGLBBytes(req.downloadHandler.data);
+    }
+
+    // ========== CENTRAL GLB HANDLER ==========
+    void HandleGLBBytes(byte[] glb)
+    {
+        if (glb == null || glb.Length == 0)
+        {
+            Debug.LogError("❌ Empty GLB!");
             return;
         }
 
-        // Save to memory
-        lastGlbBytes = glbBytes;
-        glbHistory.Add(glbBytes);
+        lastGlbBytes = glb;
+        glbHistory.Add(glb);
 
-        Debug.Log($"[BackendConnector] Stored GLB → {glbBytes.Length} bytes | Total={glbHistory.Count}");
-
-        // 🔥 Notify listeners (previewGLB, etc.)
-        OnNewGLB?.Invoke(glbBytes);
-
-        // Pass directly to AR if available
-        var ar = FindObjectOfType<SimpleARController>();
-        if (ar != null)
+        // Load as AR prefab safely
+        StartCoroutine(loader.LoadGlbObject(glb, (model) =>
         {
-            Debug.Log("[BackendConnector] Passing bytes to SimpleARController...");
-            ar.SetGLBBytes(glbBytes);
-        }
-        else
-        {
-            // Save fallback file
-            string path = Path.Combine(Application.persistentDataPath, "model.glb");
-            File.WriteAllBytes(path, glbBytes);
-            SimpleARController.glbPath = path;
+            if (!model)
+            {
+                Debug.LogError("❌ GLB load failed (model null).");
+                return;
+            }
 
-            Debug.Log("[BackendConnector] Saved GLB fallback → " + path);
-        }
+            raycastManager.raycastPrefab = model;
+            Debug.Log("✅ Assigned GLB to AR prefab.");
+        }));
+
+        // Fire preview listeners
+        OnNewGLB?.Invoke(glb);
     }
 
-
-    // -------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------
+    // ========== HELPERS ==========
     bool LooksLikeGLB(byte[] b)
     {
-        if (b == null || b.Length < 4) return false;
-        return b[0] == (byte)'g' && b[1] == (byte)'l' && b[2] == (byte)'T' && b[3] == (byte)'F';
+        return b != null && b.Length > 4 &&
+               b[0] == (byte)'g' && b[1] == (byte)'l' &&
+               b[2] == (byte)'T' && b[3] == (byte)'F';
     }
 
-    Texture2D ScaleTexture(Texture2D src, int width, int height)
+    Texture2D ScaleTexture(Texture2D src, int w, int h)
     {
-        Texture2D dst = new Texture2D(width, height, src.format, false);
+        Texture2D dst = new Texture2D(w, h);
 
-        for (int y = 0; y < height; y++)
+        for (int y = 0; y < h; y++)
         {
-            int yy = Mathf.Clamp(Mathf.RoundToInt((float)y / height * src.height), 0, src.height - 1);
-
-            for (int x = 0; x < width; x++)
+            for (int x = 0; x < w; x++)
             {
-                int xx = Mathf.Clamp(Mathf.RoundToInt((float)x / width * src.width), 0, src.width - 1);
-                dst.SetPixel(x, y, src.GetPixel(xx, yy));
+                Color c = src.GetPixel(
+                    Mathf.FloorToInt((float)x / w * src.width),
+                    Mathf.FloorToInt((float)y / h * src.height)
+                );
+                dst.SetPixel(x, y, c);
             }
         }
 

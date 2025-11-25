@@ -400,6 +400,7 @@ GameObject:
   - component: {fileID: 149913479}
   - component: {fileID: 149913478}
   - component: {fileID: 149913481}
+  - component: {fileID: 149913482}
   m_Layer: 0
   m_Name: AppController
   m_TagString: Untagged
@@ -438,6 +439,8 @@ MonoBehaviour:
   uploadUrl: http://16.171.206.252:5000/upload-to-glb
   maxUploadBytes: 6291456
   jpegQuality: 80
+  loader: {fileID: 149913482}
+  raycastManager: {fileID: 1207336762}
 --- !u!4 &149913480
 Transform:
   m_ObjectHideFlags: 0
@@ -469,6 +472,18 @@ MonoBehaviour:
   previewPanel: {fileID: 0}
   planeManager: {fileID: 1207336763}
   arUIGroup: {fileID: 642814900}
+--- !u!114 &149913482
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 149913477}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 99dd36f8e2f3145409a262bf50a4ad54, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::GLBLoader
 --- !u!1001 &207147540
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -1605,7 +1620,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 845719444}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 21644245a193f8145a9d81c89cf66bc4, type: 3}
   m_Name: 
@@ -1618,7 +1633,7 @@ MonoBehaviour:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 845719444}
-  m_Enabled: 1
+  m_Enabled: 0
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 8772bfc80f35e28459c4b993cabeffd6, type: 3}
   m_Name: 

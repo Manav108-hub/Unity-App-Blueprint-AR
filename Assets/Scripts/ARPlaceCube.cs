@@ -7,103 +7,78 @@ using UnityEngine.XR.ARSubsystems;
 public class ARPlaceCube : MonoBehaviour
 {
     [SerializeField] private ARRaycastManager raycastManager;
-    bool isPlacing = false;
-
-    // 👇 STORE LAST OBJECT
+    private bool isPlacing = false;
     private GameObject lastSpawnedObject;
 
     void Start()
     {
-        if (raycastManager == null)
-        {
-            Debug.LogError("[ARPlaceCube] ❌ ARRaycastManager is NOT assigned!");
-        }
-        else
-        {
-            Debug.Log("[ARPlaceCube] ✔ ARRaycastManager found.");
-        }
+        if (raycastManager == null) Debug.LogError("[ARPlaceCube] ARRaycastManager not assigned!");
+        else Debug.Log("[ARPlaceCube] ARRaycastManager assigned.");
     }
 
     void Update()
     {
-        if (!raycastManager)
-        {
-            Debug.LogError("[ARPlaceCube] ❌ RaycastManager missing. Cannot place object.");
-            return;
-        }
+        if (!raycastManager) return;
 
         if (Input.touchCount > 0)
         {
             var t = Input.GetTouch(0);
             if (t.phase == TouchPhase.Began)
-                Debug.Log("[ARPlaceCube] 📱 Touch detected at " + t.position);
+            {
+                Debug.Log("[ARPlaceCube] Touch began at " + t.position);
+                TryPlace(t.position);
+            }
         }
-
-        if ((Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began ||
-            Input.GetMouseButtonDown(0)) && !isPlacing)
+        else if (Input.GetMouseButtonDown(0))
         {
-            isPlacing = true;
-
-            Debug.Log("[ARPlaceCube] 🟦 Start placement attempt...");
-
-            if (Input.touchCount > 0)
-                PlaceObject(Input.GetTouch(0).position);
-            else
-                PlaceObject(Input.mousePosition);
+            Debug.Log("[ARPlaceCube] Mouse click at " + Input.mousePosition);
+            TryPlace(Input.mousePosition);
         }
     }
 
-    void PlaceObject(Vector2 touchPosition)
+    void TryPlace(Vector2 pos)
     {
-        Debug.Log("[ARPlaceCube] 🔍 Raycasting at: " + touchPosition);
+        if (isPlacing) return;
+        isPlacing = true;
+        StartCoroutine(PlaceRoutine(pos));
+    }
 
-        var rayHits = new List<ARRaycastHit>();
-        bool hitSomething = raycastManager.Raycast(touchPosition, rayHits, TrackableType.AllTypes);
+    IEnumerator PlaceRoutine(Vector2 pos)
+    {
+        Debug.Log("[ARPlaceCube] Raycasting at " + pos);
+        var hits = new List<ARRaycastHit>();
+        bool hit = raycastManager.Raycast(pos, hits, TrackableType.Planes);
 
-        Debug.Log("[ARPlaceCube] 🎯 Raycast hit result = " + hitSomething);
+        Debug.Log("[ARPlaceCube] Raycast hit? " + hit + " count=" + hits.Count);
 
-        if (hitSomething && rayHits.Count > 0)
+        if (hit && hits.Count > 0)
         {
-            Pose hitPose = rayHits[0].pose;
+            var pose = hits[0].pose;
+            Debug.Log("[ARPlaceCube] Hit pose: " + pose.position);
 
-            Debug.Log("[ARPlaceCube] ✅ HIT detected!");
+            // Remove previous
+            if (lastSpawnedObject != null)
+            {
+                Destroy(lastSpawnedObject);
+                Debug.Log("[ARPlaceCube] Removed previous placed object.");
+            }
 
             if (raycastManager.raycastPrefab != null)
             {
-                // 👇 REMOVE PREVIOUS OBJECT
-                if (lastSpawnedObject != null)
-                {
-                    Destroy(lastSpawnedObject);
-                    Debug.Log("[ARPlaceCube] 🗑 Removed previous object");
-                }
-
-                // 👇 SPAWN NEW OBJECT
-                lastSpawnedObject = Instantiate(
-                    raycastManager.raycastPrefab,
-                    hitPose.position,
-                    hitPose.rotation
-                );
-
-                Debug.Log("[ARPlaceCube] ✔ Instantiated NEW object");
+                lastSpawnedObject = Instantiate(raycastManager.raycastPrefab, pose.position, pose.rotation);
+                Debug.Log("[ARPlaceCube] Instantiated prefab as placed object.");
             }
             else
             {
-                Debug.LogError("[ARPlaceCube] ❌ raycastPrefab on ARRaycastManager is NULL!");
+                Debug.LogError("[ARPlaceCube] raycastPrefab is NULL on ARRaycastManager.");
             }
         }
         else
         {
-            Debug.LogWarning("[ARPlaceCube] ⚠ No hit detected on any AR plane or trackable.");
+            Debug.LogWarning("[ARPlaceCube] No plane hit; nothing instantiated.");
         }
 
-        StartCoroutine(SetIsPlacingToFalseWithDelay());
-    }
-
-    IEnumerator SetIsPlacingToFalseWithDelay()
-    {
-        Debug.Log("[ARPlaceCube] ⏳ Resetting placement lock...");
         yield return new WaitForSeconds(0.25f);
         isPlacing = false;
-        Debug.Log("[ARPlaceCube] 🔄 Placement ready again.");
     }
 }
