@@ -1851,6 +1851,7 @@ GameObject:
   - component: {fileID: 1207336771}
   - component: {fileID: 1207336770}
   - component: {fileID: 1207336769}
+  - component: {fileID: 1207336772}
   m_Layer: 0
   m_Name: AR Session
   m_TagString: MainCamera
@@ -1873,7 +1874,7 @@ MonoBehaviour:
   <trackablesChanged>k__BackingField:
     m_PersistentCalls:
       m_Calls: []
-  m_RaycastPrefab: {fileID: 0}
+  m_RaycastPrefab: {fileID: 7644716356994759148, guid: d893579a94c7ead418de3f2eeb85dd6a, type: 3}
 --- !u!114 &1207336763
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -1889,7 +1890,7 @@ MonoBehaviour:
   <trackablesChanged>k__BackingField:
     m_PersistentCalls:
       m_Calls: []
-  m_PlanePrefab: {fileID: 0}
+  m_PlanePrefab: {fileID: 8870032574689507790, guid: b509216d15fd5774093e06aa5bc59904, type: 3}
   m_DetectionMode: -1
 --- !u!114 &1207336764
 MonoBehaviour:
@@ -2079,6 +2080,19 @@ MonoBehaviour:
   m_LightEstimation: 0
   m_FacingDirection: 1
   m_RenderMode: 0
+--- !u!114 &1207336772
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1207336761}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 97e7707eee4254a4697420cbed3183b9, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::ARPlaceCube
+  raycastManager: {fileID: 1207336762}
 --- !u!1 &1375737368
 GameObject:
   m_ObjectHideFlags: 0
