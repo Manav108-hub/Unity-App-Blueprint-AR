@@ -25,12 +25,20 @@ public class UIController : MonoBehaviour
         if (previewPanel != null) previewPanel.SetActive(true);
     }
 
+    public GameObject previewRoot;   // assign "Preview" object here
+
     public void EnterARMode()
     {
         if (planeManager != null) planeManager.enabled = true;
         if (arUIGroup != null) arUIGroup.SetActive(true);
+
+        // Hide preview model
+        if (previewRoot != null) previewRoot.SetActive(false);
+
+        // Hide preview UI image
         if (previewPanel != null) previewPanel.SetActive(false);
     }
+
 
     public void ExitARMode()
     {
