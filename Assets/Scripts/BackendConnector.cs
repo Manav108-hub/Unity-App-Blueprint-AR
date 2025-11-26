@@ -63,9 +63,13 @@ public class BackendConnector : MonoBehaviour
     // ========== UPLOAD IMAGE + RECEIVE GLB ==========
     IEnumerator UploadToServer(string imagePath)
     {
+        // 🔥 Show loader when upload starts
+        LoaderController.Instance.Show();
+
         if (!File.Exists(imagePath))
         {
             Debug.LogError("❌ Image does not exist.");
+            LoaderController.Instance.Hide();
             yield break;
         }
 
@@ -73,6 +77,7 @@ public class BackendConnector : MonoBehaviour
 
         byte[] uploadBytes = imageBytes;
 
+        // Compression for large images
         if (imageBytes.Length > maxUploadBytes)
         {
             Debug.Log("Compressing oversized image...");
@@ -104,22 +109,23 @@ public class BackendConnector : MonoBehaviour
         if (req.result != UnityWebRequest.Result.Success)
         {
             Debug.LogError("❌ Upload failed: " + req.error);
+            LoaderController.Instance.Hide();
             yield break;
         }
 
         byte[] response = req.downloadHandler.data;
 
+        // If server directly returns GLB
         if (LooksLikeGLB(response))
         {
             HandleGLBBytes(response);
             yield break;
         }
 
-        // JSON case:
+        // JSON fallback
         string text = Encoding.UTF8.GetString(response);
         Debug.Log("Server text response: " + text);
 
-        // Parse glb_url if needed
         string glbUrl = null;
 
         if (text.StartsWith("{"))
@@ -134,9 +140,14 @@ public class BackendConnector : MonoBehaviour
         }
 
         if (!string.IsNullOrEmpty(glbUrl))
+        {
             yield return StartCoroutine(DownloadGLB(glbUrl));
+        }
         else
+        {
             Debug.LogError("❌ No GLB URL found.");
+            LoaderController.Instance.Hide();
+        }
     }
 
     // ========== DOWNLOAD GLB ==========
@@ -150,6 +161,7 @@ public class BackendConnector : MonoBehaviour
         if (req.result != UnityWebRequest.Result.Success)
         {
             Debug.LogError("❌ Download failed: " + req.error);
+            LoaderController.Instance.Hide();
             yield break;
         }
 
@@ -162,6 +174,7 @@ public class BackendConnector : MonoBehaviour
         if (glb == null || glb.Length == 0)
         {
             Debug.LogError("❌ Empty GLB!");
+            LoaderController.Instance.Hide();
             return;
         }
 
@@ -174,11 +187,15 @@ public class BackendConnector : MonoBehaviour
             if (!model)
             {
                 Debug.LogError("❌ GLB load failed (model null).");
+                LoaderController.Instance.Hide();
                 return;
             }
 
             raycastManager.raycastPrefab = model;
             Debug.Log("✅ Assigned GLB to AR prefab.");
+
+            // 🔥 Hide loader ONLY AFTER Unity finishes loading the model
+            LoaderController.Instance.Hide();
         }));
 
         // Fire preview listeners
