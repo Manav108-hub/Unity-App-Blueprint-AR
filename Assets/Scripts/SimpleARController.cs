@@ -5,258 +5,211 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
+using UnityEngine.UI;
+using UnityEngine.EventSystems;
 using GLTFast;
 
 public class SimpleARController : MonoBehaviour
 {
-    public static string glbPath;                // legacy usage, optional
+    public static string glbPath;
+    public static bool IsLocked = false;
+
+    [Header("AR")]
     public ARRaycastManager raycastManager;
     public GameObject placementIndicator;
 
     private List<ARRaycastHit> hits = new List<ARRaycastHit>();
     private GameObject spawnedModel;
-    private bool isLocked = false;
     private bool isLoading = false;
 
-    // store the bytes; loaded when backend provides them
     private byte[] pendingGlbBytes = null;
 
-    [Header("Placement / Scale")]
-    [Tooltip("If true, the controller will attempt to auto-place when bytes arrive (at center or placementIndicator).")]
+    [Header("Scale / Placement")]
     public bool autoPlaceWhenReady = true;
-
-    [Tooltip("Default local scale for spawned model (tweak as required).")]
     public Vector3 defaultLocalScale = Vector3.one * 0.2f;
 
-    // Called by BackendConnector when bytes are available
+    // ======================================================================
+    //                               UI CHECK
+    // ======================================================================
+    bool IsPointerOverUI()
+    {
+        if (EventSystem.current == null) return false;
+
+        if (Input.touchCount > 0)
+            return EventSystem.current.IsPointerOverGameObject(Input.GetTouch(0).fingerId);
+
+        return EventSystem.current.IsPointerOverGameObject();
+    }
+
+    // ======================================================================
+    //                      CALLED BY BackendConnector
+    // ======================================================================
     public void SetGLBBytes(byte[] bytes)
     {
         if (bytes == null || bytes.Length == 0)
-        {
-            Debug.LogError("[SimpleARController] SetGLBBytes received empty bytes");
             return;
-        }
-        pendingGlbBytes = bytes;
-        Debug.Log($"[SimpleARController] Received GLB bytes ({bytes.Length} bytes)");
 
-        // If auto place is on and placementIndicator already active, immediately place there.
-        // Otherwise BackendConnector will call LoadFromBytesAtPose if it wants immediate placement.
-        if (autoPlaceWhenReady && placementIndicator != null && placementIndicator.activeInHierarchy)
+        pendingGlbBytes = bytes;
+
+        if (!IsLocked &&
+            autoPlaceWhenReady &&
+            placementIndicator != null &&
+            placementIndicator.activeInHierarchy)
         {
-            var pose = new Pose(placementIndicator.transform.position, placementIndicator.transform.rotation);
-            LoadFromBytesAtPose(pose);
+            Pose p = new Pose(placementIndicator.transform.position,
+                              placementIndicator.transform.rotation);
+
+            LoadFromBytesAtPose(p);
             pendingGlbBytes = null;
-            Debug.Log("[SimpleARController] Auto-placed at placement indicator.");
         }
     }
 
-    // Call this if you want to directly spawn at a pose (e.g., immediate placement)
     public void LoadFromBytesAtPose(Pose pose)
     {
-        if (pendingGlbBytes == null)
-        {
-            Debug.LogWarning("[SimpleARController] No GLB bytes available to load.");
-            return;
-        }
+        if (pendingGlbBytes == null) return;
+
         StartCoroutine(LoadFromBytesCoroutine(pendingGlbBytes, pose));
-        pendingGlbBytes = null; // consume
+        pendingGlbBytes = null;
     }
 
-    // Typical user flow: touch a plane, then we load + place from pending bytes
+    // ======================================================================
+    //                               UPDATE
+    // ======================================================================
     void Update()
     {
-        // Update placement indicator based on centre raycast (optional)
+        // ============================================================
+        // 1. IF LOCKED → STOP MOVEMENT & PLACEMENT
+        // ============================================================
+        if (IsLocked)
+        {
+            if (placementIndicator != null)
+                placementIndicator.SetActive(false);
+            return;
+        }
+
+        // ============================================================
+        // 2. BLOCK PLACEMENT WHEN TOUCHING UI
+        // ============================================================
+        if (IsPointerOverUI())
+            return;
+
+        // ============================================================
+        // 3. UPDATE PLACEMENT INDICATOR
+        // ============================================================
         if (placementIndicator != null)
         {
-            if (raycastManager != null &&
-                raycastManager.Raycast(new Vector2(Screen.width / 2f, Screen.height / 2f), hits, TrackableType.Planes))
+            if (raycastManager.Raycast(new Vector2(Screen.width / 2f, Screen.height / 2f),
+                                       hits, TrackableType.Planes))
             {
                 placementIndicator.SetActive(true);
                 placementIndicator.transform.position = hits[0].pose.position;
                 placementIndicator.transform.rotation = hits[0].pose.rotation;
             }
-            else placementIndicator.SetActive(false);
+            else
+                placementIndicator.SetActive(false);
         }
 
-        if (isLocked) return;
-
-        // Touch-to-place behavior
-        if (spawnedModel == null && Input.touchCount > 0 && Input.GetTouch(0).phase == TouchPhase.Began && !isLoading)
+        // ============================================================
+        // 4. TOUCH → SPAWN GLB (ONLY WHEN NOT LOCKED)
+        // ============================================================
+        if (spawnedModel == null &&
+            Input.touchCount > 0 &&
+            Input.GetTouch(0).phase == TouchPhase.Began &&
+            !isLoading)
         {
-            if (raycastManager.Raycast(Input.GetTouch(0).position, hits, TrackableType.Planes))
+            if (raycastManager.Raycast(Input.GetTouch(0).position,
+                                       hits, TrackableType.Planes))
             {
                 Pose p = hits[0].pose;
-                if (pendingGlbBytes != null && pendingGlbBytes.Length > 0)
+
+                if (pendingGlbBytes != null)
                 {
                     StartCoroutine(LoadFromBytesCoroutine(pendingGlbBytes, p));
-                    pendingGlbBytes = null; // consume bytes (optional)
+                    pendingGlbBytes = null;
                 }
-                else if (!string.IsNullOrEmpty(glbPath) && File.Exists(glbPath))
+                else if (!string.IsNullOrEmpty(glbPath) &&
+                         File.Exists(glbPath))
                 {
                     StartCoroutine(LoadFromFileCoroutine(glbPath, p));
-                }
-                else
-                {
-                    Debug.Log("[SimpleARController] No GLB available. Upload first.");
                 }
             }
         }
     }
 
+    // ======================================================================
+    //                           LOAD GLB FROM BYTES
+    // ======================================================================
     IEnumerator LoadFromBytesCoroutine(byte[] bytes, Pose placePose)
     {
         if (isLoading) yield break;
         isLoading = true;
 
-        Debug.Log("[SimpleARController] Loading GLB from bytes...");
+        LoaderController.Instance.Show();
+
         var gltf = new GltfImport();
-
-        Task<bool> loadTask = null;
-        try
-        {
-            loadTask = gltf.LoadGltfBinary(bytes);
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[SimpleARController] Exception starting LoadGltfBinary: " + ex);
-            isLoading = false;
-            yield break;
-        }
-
+        Task<bool> loadTask = gltf.LoadGltfBinary(bytes);
         yield return new WaitUntil(() => loadTask.IsCompleted);
 
-        bool loaded = false;
-        try
+        if (!loadTask.Result)
         {
-            loaded = loadTask.Result;
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[SimpleARController] Load task exception: " + ex);
+            LoaderController.Instance.Hide();
             isLoading = false;
             yield break;
         }
 
-        if (!loaded)
-        {
-            Debug.LogError("[SimpleARController] Failed to load GLB from bytes (gltf.Load returned false).");
-            isLoading = false;
-            yield break;
-        }
-
-        // destroy previous model if exists
-        if (spawnedModel != null)
-        {
-            Destroy(spawnedModel);
-            spawnedModel = null;
-        }
-
-        // instantiate into parent GameObject
+        if (spawnedModel != null) Destroy(spawnedModel);
         spawnedModel = new GameObject("SpawnedModel");
-        Task instantiateTask = null;
-        try
-        {
-            instantiateTask = gltf.InstantiateMainSceneAsync(spawnedModel.transform);
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[SimpleARController] Exception starting InstantiateMainSceneAsync: " + ex);
-            Destroy(spawnedModel);
-            spawnedModel = null;
-            isLoading = false;
-            yield break;
-        }
 
-        yield return new WaitUntil(() => instantiateTask.IsCompleted);
+        Task instTask = gltf.InstantiateMainSceneAsync(spawnedModel.transform);
+        yield return new WaitUntil(() => instTask.IsCompleted);
 
-        if (instantiateTask.IsFaulted)
-        {
-            Debug.LogError("[SimpleARController] Instantiate faulted: " + (instantiateTask.Exception != null ? instantiateTask.Exception.ToString() : "unknown"));
-            Destroy(spawnedModel);
-            spawnedModel = null;
-            isLoading = false;
-            yield break;
-        }
-
-        // Position & orient
         spawnedModel.transform.position = placePose.position;
         spawnedModel.transform.rotation = placePose.rotation;
 
-        // Apply default scale (configurable)
-        spawnedModel.transform.localScale = defaultLocalScale;
-
-        Debug.Log("[SimpleARController] GLB loaded from bytes and instantiated.");
+        LoaderController.Instance.Hide();
         isLoading = false;
     }
 
+    // ======================================================================
+    //                           LOAD GLB FROM FILE
+    // ======================================================================
     IEnumerator LoadFromFileCoroutine(string filePath, Pose placePose)
     {
         if (isLoading) yield break;
         isLoading = true;
 
-        Debug.Log("[SimpleARController] Loading GLB from file: " + filePath);
-        var gltf = new GltfImport();
-        Task<bool> loadTask = null;
-        try
-        {
-            loadTask = gltf.Load("file://" + filePath);
-        }
-        catch (System.Exception ex)
-        {
-            Debug.LogError("[SimpleARController] Exception starting Load(file): " + ex);
-            isLoading = false;
-            yield break;
-        }
+        LoaderController.Instance.Show();
 
+        var gltf = new GltfImport();
+        Task<bool> loadTask = gltf.Load("file://" + filePath);
         yield return new WaitUntil(() => loadTask.IsCompleted);
 
-        bool loaded = false;
-        try { loaded = loadTask.Result; }
-        catch (System.Exception ex) { Debug.LogError("[SimpleARController] Load task exception: " + ex); }
-
-        if (!loaded)
+        if (!loadTask.Result)
         {
-            Debug.LogError("[SimpleARController] Failed to load GLB from file.");
+            LoaderController.Instance.Hide();
             isLoading = false;
             yield break;
         }
 
-        if (spawnedModel != null)
-        {
-            Destroy(spawnedModel);
-            spawnedModel = null;
-        }
-
+        if (spawnedModel != null) Destroy(spawnedModel);
         spawnedModel = new GameObject("SpawnedModel");
-        Task instantiateTask = gltf.InstantiateMainSceneAsync(spawnedModel.transform);
-        yield return new WaitUntil(() => instantiateTask.IsCompleted);
 
-        if (instantiateTask.IsFaulted)
-        {
-            Debug.LogError("[SimpleARController] Instantiate faulted: " + (instantiateTask.Exception != null ? instantiateTask.Exception.ToString() : "unknown"));
-            Destroy(spawnedModel);
-            spawnedModel = null;
-            isLoading = false;
-            yield break;
-        }
+        Task instTask = gltf.InstantiateMainSceneAsync(spawnedModel.transform);
+        yield return new WaitUntil(() => instTask.IsCompleted);
 
         spawnedModel.transform.position = placePose.position;
         spawnedModel.transform.rotation = placePose.rotation;
-        spawnedModel.transform.localScale = defaultLocalScale;
 
+        LoaderController.Instance.Hide();
         isLoading = false;
-        Debug.Log("[SimpleARController] GLB loaded from file and instantiated.");
     }
 
-    public void OnRotateButton()
-    {
-        if (spawnedModel != null)
-            spawnedModel.transform.Rotate(Vector3.up, 30f, Space.Self);
-    }
-
+    // ======================================================================
+    //                               LOCK BUTTON
+    // ======================================================================
     public void OnLockButton()
     {
-        isLocked = !isLocked;
-        Debug.Log("[SimpleARController] Model " + (isLocked ? "locked" : "unlocked"));
+        IsLocked = !IsLocked;
+        Debug.Log("[SimpleARController] Locked = " + IsLocked);
     }
 }
